@@ -1,12 +1,12 @@
 // Firebase (CDN modular import)
 import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
-const IS_THERE_ANY_DEAL_API_KEY = "__IS_THERE_ANY_DEAL_API_KEY__";
-const PUBLIC_FIREBASE_API_KEY = "__PUBLIC_FIREBASE_API_KEY__";
+const PROXY_BASE = "https://itad-proxy.ivanprokopenkose7en.workers.dev";
+
 
 // Your web app's Firebase configuration
 const firebaseConfig = {
-  apiKey: PUBLIC_FIREBASE_API_KEY,
+  apiKey: "AIzaSyDhj6QjW99aKOV3HvlH9HsWGpksQ0kToUY",
   authDomain: "nake-10402.firebaseapp.com",
   projectId: "nake-10402",
   storageBucket: "nake-10402.firebasestorage.app",
@@ -147,10 +147,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (cachedDeals) {
       renderDeals(cachedDeals, slug);
     } else {
-      fetch(`https://api.isthereanydeal.com/games/prices/v3?key=${IS_THERE_ANY_DEAL_API_KEY}&country=US`, {
-        method: 'POST',
-        body: JSON.stringify([appID])
-      })
+      fetch(`${PROXY_BASE}/prices?appid=${appID}`)
         .then((response) => response.json())
         .then((gameInfo) => {
 
@@ -169,7 +166,8 @@ document.addEventListener("DOMContentLoaded", () => {
         showHints([]);
         return;
       }
-      fetch(`https://api.isthereanydeal.com/games/search/v1?key=${IS_THERE_ANY_DEAL_API_KEY}&title=${searchTerm}&results=5`)
+      fetch(`${PROXY_BASE}/search?title=${encodeURIComponent(searchTerm)}`)
+
         .then((response) => response.json())
         .then((data) => {
           matchingGames = data;
