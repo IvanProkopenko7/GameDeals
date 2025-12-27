@@ -2,7 +2,7 @@
 - to projekt agregatora gier wideo stworzony w oparciu na [*IsThereAnyDeal API*](https://docs.isthereanydeal.com/). W nim będzie można znaleźć najlepsze oferty gier, najniższe ceny, promocje itd. Także porównywać ceny z różnych platform **(Steam, Epic Store, GoG Games, Ubisoft store, Gamesplanet itd.)**.
 
 ## Gdzie zobaczyć stronę?
-**Za linkiem https://ivanprokopenko7.github.io/GameDeals/**
+**Za linkiem [https://nake.games/](https://nake.games/)**
 
 ## Skąd taka nazwa?
 - Nazwa pochodzi ze skrótu od nazwy handlowca z gry Beholder - [*Nathan Kehler*](https://beholder.fandom.com/wiki/Nathan_Kehler_(core)). Także to czasownik od słowa obnażyć, co odzwierciedla cel projektu - obnażyć prawdziwe ceny, które ukrywają najpopularniejsze platformy gamingowe.
