@@ -1,5 +1,6 @@
+import { config } from './config.js';
 
-import { createAuth0Client } from '@auth0/auth0-spa-js';
+const auth0 = window.auth0; // Auth0 will be globally available
 // DOM elements
 const loading = document.getElementById('loading');
 const error = document.getElementById('error');
@@ -15,8 +16,8 @@ let auth0Client;
 async function initAuth0() {
   try {
     // Validate environment variables
-    const domain = import.meta.env.VITE_AUTH0_DOMAIN;
-    const clientId = import.meta.env.VITE_AUTH0_CLIENT_ID;
+    const domain = config.auth0Domain;
+    const clientId = config.auth0ClientId;
 
     if (!domain || !clientId) {
       throw new Error('Auth0 configuration missing. Please check your .env.local file for VITE_AUTH0_DOMAIN and VITE_AUTH0_CLIENT_ID');
@@ -27,7 +28,7 @@ async function initAuth0() {
       console.warn('Auth0 domain format might be incorrect. Expected format: your-domain.auth0.com');
     }
 
-    auth0Client = await createAuth0Client({
+    auth0Client = await window.auth0.createAuth0Client({
       domain: domain,
       clientId: clientId,
       // Persist tokens across pages / reloads and allow refresh tokens
@@ -79,7 +80,7 @@ async function updateUI() {
     hideLoading();
   } catch (err) {
     console.error('UI update error:', err);
-    showError(err.message); 
+    showError(err.message);
   }
 }
 
