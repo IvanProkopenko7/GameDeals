@@ -20,7 +20,7 @@ async function initAuth0() {
     const clientId = config.auth0ClientId;
 
     if (!domain || !clientId) {
-      throw new Error('Auth0 configuration missing. Please check your .env.local file for VITE_AUTH0_DOMAIN and VITE_AUTH0_CLIENT_ID');
+      throw new Error('Auth0 configuration missing. Please check your config.js file for auth0Domain and auth0ClientId');
     }
 
     // Normalize and validate Auth0 domain format
@@ -312,9 +312,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const appID = urlParams.get('appid');
   const slug = urlParams.get('slug');
   const code = urlParams.get('code');
-  if (code) {
-
-  }
 
 
   // If there's a appID in the URL, fetch and display that game
@@ -325,12 +322,12 @@ document.addEventListener("DOMContentLoaded", () => {
     if (cachedDeals) {
       renderDeals(cachedDeals, slug);
     } else {
-      fetch(`${PROXY_BASE}/prices?appid=${appID}`)
+      fetch(`${PROXY_BASE}?endpoint=/games/prices/v2&appid=${appID}`)
         .then((response) => response.json())
-        .then((gameInfo) => {
+        .then((gamePrices) => {
 
-          renderDeals(gameInfo[0], slug);
-          setCachedData(cacheKey, gameInfo[0]);
+          renderDeals(gamePrices[0], slug);
+          setCachedData(cacheKey, gamePrices[0]);
         })
         .catch((error) => console.error("Error fetching game info:", error));
     }
@@ -344,7 +341,7 @@ document.addEventListener("DOMContentLoaded", () => {
         showHints([]);
         return;
       }
-      fetch(`${PROXY_BASE}/search?title=${encodeURIComponent(searchTerm)}`)
+      fetch(`${PROXY_BASE}?endpoint=/games/search/v1&title=${encodeURIComponent(searchTerm)}&results=5`)
 
         .then((response) => response.json())
         .then((data) => {
