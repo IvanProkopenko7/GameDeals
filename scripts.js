@@ -250,8 +250,27 @@ function showHints(hints) {
 
 }
 
+
+
+async function fetchSteamDescription(appid) {
+  if (!appid) return null;
+
+  try {
+    // Use CORS proxy for Steam API
+    const response = await fetch(`https://corsproxy.io/?${encodeURIComponent(`https://store.steampowered.com/api/appdetails?appids=${appid}`)}`);
+    const data = await response.json();
+    console.log("Steam description data:", data);
+    if (data[appid]?.success && (data[appid]?.data?.short_description || data[appid]?.data?.about_the_game)) {
+      return data[appid].data.about_the_game || data[appid].data.short_description;
+    }
+  } catch (error) {
+    console.error("Error fetching Steam description:", error);
+  }
+  return null;
+}
+
 function renderDeals(game, slug) {
-  const wrapper = document.querySelector(".game-list");
+  const gameList = document.querySelector(".game-list");
   document.querySelector(".title").innerText = slug;
   game.deals.forEach((deal) => {
     const dealDiv = document.createElement("li");
@@ -266,8 +285,35 @@ function renderDeals(game, slug) {
       <div class="game-list_discount">${deal.cut}%</div>
     `;
     dealDiv.appendChild(dealA);
-    wrapper.appendChild(dealDiv);
+    gameList.appendChild(dealDiv);
   });
+}
+async function showGameSidebar(gameInfo) {
+  console.log(gameInfo);
+  const sidebar = document.querySelector(".game-sidebar");
+  sidebar.innerHTML = "";
+
+  // Fetch Steam description
+  const steamDescription = await fetchSteamDescription(gameInfo.appid);
+  const descriptionText = steamDescription
+    ? steamDescription
+    : "Description unavailable";
+
+  sidebar.innerHTML = `
+    <div class="game-sidebar_banner">
+      <img src="${gameInfo.assets.banner400}" alt="${gameInfo.title} Banner">
+    </div>
+    <div class="game-sidebar_block">
+      <ul class="game-sidebar_tags">
+        ${gameInfo.tags.map(tag => `<li class="game-sidebar_tag">${tag}</li>`).join('')}
+      </ul>
+      <div class="game-sidebar_description">
+        ${descriptionText}
+      </div>
+      <span class="game-sidebar_metacritic">summary by <a target="_blank" href="https://www.metacritic.com/game/${gameInfo.slug}/">MetaCritic</a></span>
+    </div>
+`;
+
 }
 const FULL_CACHE_DURATION = 1000 * 60 * 60 * 24; // 24 hours
 const CACHE_DURATION = 1000 * 60 * 5; // 5 minutes
@@ -311,14 +357,18 @@ document.addEventListener("DOMContentLoaded", () => {
   const urlParams = new URLSearchParams(queryString);
   const appID = urlParams.get('appid');
   const slug = urlParams.get('slug');
-  const code = urlParams.get('code');
 
 
   // If there's a appID in the URL, fetch and display that game
   if (appID) {
     const cacheKey = `deals_${appID}`;
     const cachedDeals = getCachedData(cacheKey);
-
+    fetch(`${PROXY_BASE}?endpoint=/games/info/v2&id=${appID}`)
+      .then(response => response.json())
+      .then(gameInfo => {
+        showGameSidebar(gameInfo);
+      })
+      .catch(error => console.error("Error fetching game info:", error));
     if (cachedDeals) {
       renderDeals(cachedDeals, slug);
     } else {
