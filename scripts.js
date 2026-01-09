@@ -251,7 +251,7 @@ function showHints(hints) {
 }
 
 
-
+/* STEAM API IMPLEMENTATION (COMMENTED OUT)
 async function fetchSteamDescription(appid) {
   if (!appid) return null;
 
@@ -265,6 +265,34 @@ async function fetchSteamDescription(appid) {
     }
   } catch (error) {
     console.error("Error fetching Steam description:", error);
+  }
+  return null;
+}
+*/
+
+// IGDB API implementation for fetching game summary
+async function fetchIGDBSummary(gameName) {
+  if (!gameName) return null;
+
+  try {
+    const response = await fetch(`${PROXY_BASE}?api=igdb&endpoint=games`, {
+      method: 'POST',
+      body: `fields name,summary; search "${gameName}"; limit 1;`
+    });
+    
+    if (!response.ok) {
+      console.error("IGDB API error:", response.statusText);
+      return null;
+    }
+    
+    const data = await response.json();
+    console.log("IGDB data:", data);
+    
+    if (data && data.length > 0 && data[0].summary) {
+      return data[0].summary;
+    }
+  } catch (error) {
+    console.error("Error fetching IGDB summary:", error);
   }
   return null;
 }
@@ -293,11 +321,18 @@ async function showGameSidebar(gameInfo) {
   const sidebar = document.querySelector(".game-sidebar");
   sidebar.innerHTML = "";
 
-  // Fetch Steam description
+  // Fetch IGDB summary (short description)
+  const igdbSummary = await fetchIGDBSummary(gameInfo.title);
+  const descriptionText = igdbSummary
+    ? igdbSummary
+    : "Description unavailable";
+
+  /* OLD Steam implementation
   const steamDescription = await fetchSteamDescription(gameInfo.appid);
   const descriptionText = steamDescription
     ? steamDescription
     : "Description unavailable";
+  */
 
   sidebar.innerHTML = `
     <div class="game-sidebar_banner">
@@ -310,7 +345,7 @@ async function showGameSidebar(gameInfo) {
       <div class="game-sidebar_description">
         ${descriptionText}
       </div>
-      <span class="game-sidebar_metacritic">summary by <a target="_blank" href="https://www.metacritic.com/game/${gameInfo.slug}/">MetaCritic</a></span>
+      <span class="game-sidebar_metacritic">summary by <a target="_blank" href="https://www.igdb.com/">IGDB</a></span>
     </div>
 `;
 
