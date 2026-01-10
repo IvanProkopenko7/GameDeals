@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Redirecting...</title>
+  <script>
+    // GitHub Pages SPA redirect handler
+    (function() {
+      var path = window.location.pathname;
+      var segments = path.split('/').filter(function(s) { return s; });
+      
+      // Check if this is a /game/slug or /repo-name/game/slug path
+      var gameIndex = segments.indexOf('game');
+      if (gameIndex >= 0 && segments[gameIndex + 1]) {
+        // Store the full path for the script to parse
+        sessionStorage.setItem('redirectPath', path);
+        // Redirect to game.html in the same directory context
+        var basePath = segments.slice(0, gameIndex).join('/');
+        var redirectUrl = (basePath ? '/' + basePath : '') + '/game.html';
+        window.location.replace(redirectUrl);
+      } else {
+        // For other 404s, redirect to home
+        window.location.replace('/');
+      }
+    })();
+  </script>
+</head>
+<body>
+  Redirecting...
+</body>
+</html>

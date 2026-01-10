@@ -244,8 +244,10 @@ function showHints(hints) {
   const hintList = hintsContainer.appendChild(document.createElement("ul"));
   hints.forEach((hint) => {
     const hintEl = hintList.appendChild(document.createElement("li"))
-    // Use /game (no .html) to avoid server redirect that may strip query params
-    hintEl.innerHTML = `<a href="/game?appid=${hint.id}&slug=${encodeURIComponent(hint.title)}">${hint.title}</a>`;
+    // Store slug-to-ID mapping for later lookup
+    setCachedData(`slug_${hint.slug}`, hint.id);
+    // Use clean path-based URLs
+    hintEl.innerHTML = `<a href="/game/${hint.slug}">${hint.title}</a>`;
   });
 
 }
@@ -273,28 +275,151 @@ async function fetchSteamDescription(appid) {
 // IGDB API implementation for fetching game summary
 async function fetchIGDBSummary(gameName) {
   if (!gameName) return null;
-
+  console.log(gameName)
   try {
     const response = await fetch(`${PROXY_BASE}?api=igdb&endpoint=games`, {
       method: 'POST',
-      body: `fields name,summary; search "${gameName}"; limit 1;`
+      body: `fields name,storyline,summary; where slug = "${gameName}"; limit 1;` 
     });
-    
+
     if (!response.ok) {
       console.error("IGDB API error:", response.statusText);
       return null;
     }
-    
+
     const data = await response.json();
     console.log("IGDB data:", data);
-    
-    if (data && data.length > 0 && data[0].summary) {
-      return data[0].summary;
+
+    if (data && data.length > 0) {
+      if (data[0].summary) {
+        return { text: data[0].summary, source: 'IGDB' };
+      }
+      if (data[0].storyline) {
+        return { text: data[0].storyline, source: 'IGDB' };
+      }
     }
   } catch (error) {
     console.error("Error fetching IGDB summary:", error);
   }
   return null;
+}
+
+// RAWG API implementation for fetching game description
+async function fetchRAWGDescription(gameName) {
+  if (!gameName) return null;
+
+  try {
+    const apiKey = config.rawgApiKey;
+    if (!apiKey) {
+      console.warn('RAWG API key not configured');
+      return null;
+    }
+
+    // Search for the game
+    const searchResponse = await fetch(
+      `https://api.rawg.io/api/games?key=${apiKey}&search=${encodeURIComponent(gameName)}&page_size=1`
+    );
+
+    if (!searchResponse.ok) {
+      console.error("RAWG search error:", searchResponse.statusText);
+      return null;
+    }
+
+    const searchData = await searchResponse.json();
+    console.log("RAWG search data:", searchData);
+
+    if (searchData.results && searchData.results.length > 0) {
+      const gameId = searchData.results[0].id;
+
+      // Get detailed game info
+      const detailResponse = await fetch(
+        `https://api.rawg.io/api/games/${gameId}?key=${apiKey}`
+      );
+
+      if (!detailResponse.ok) {
+        console.error("RAWG detail error:", detailResponse.statusText);
+        return null;
+      }
+
+      const details = await detailResponse.json();
+      console.log("RAWG details:", details);
+
+      if (details.description) {
+        // Remove HTML tags from description
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = details.description;
+        const plainText = tempDiv.textContent || tempDiv.innerText || '';
+        return { text: plainText.trim(), source: 'RAWG' };
+      }
+    }
+  } catch (error) {
+    console.error("Error fetching RAWG description:", error);
+  }
+  return null;
+}
+
+// Validate if description is good quality (not promotional text)
+function isValidDescription(text) {
+  if (!text || text.length < 80) return false;
+
+  // Check for promotional keywords that indicate marketing text
+  const promoKeywords = [
+    'now available',
+    'buy now',
+    'purchase',
+    'bundle',
+    'features include',
+    'available as a bundle'
+  ];
+
+  const lowerText = text.toLowerCase();
+  const hasPromoKeywords = promoKeywords.some(keyword => lowerText.includes(keyword));
+
+  return !hasPromoKeywords;
+}
+
+// Resolve game slug to ID using cache or search API
+async function resolveSlugToId(slug) {
+  // Check cache first
+  const cacheKey = `slug_${slug}`;
+  const cachedId = getCachedData(cacheKey);
+  if (cachedId) {
+    return cachedId;
+  }
+
+  // If not in cache, search for the game
+  try {
+    const response = await fetch(`${PROXY_BASE}?endpoint=/games/search/v1&title=${encodeURIComponent(slug)}`);
+    const data = await response.json();
+    if (data && data.length > 0) {
+      // Find best match by slug
+      const game = data.find(g => g.slug === slug) || data[0];
+      setCachedData(cacheKey, game.id);
+      return game.id;
+    }
+  } catch (error) {
+    console.error('Error resolving slug to ID:', error);
+  }
+  return null;
+}
+
+// Main function to fetch game description with fallback
+async function fetchGameDescription(gameName) {
+  if (!gameName) return { text: 'Description unavailable', source: null };
+
+  // Try IGDB first
+  let result = await fetchIGDBSummary(gameName);
+
+  // If IGDB returns short or promotional text, try RAWG
+  if (!result || !isValidDescription(result.text)) {
+    console.log('IGDB description inadequate, trying RAWG...');
+    const rawgResult = await fetchRAWGDescription(gameName);
+    if (rawgResult && isValidDescription(rawgResult.text)) {
+      result = rawgResult;
+    }
+  }
+
+  return result || { text: 'Description unavailable', source: null };
 }
 
 function renderDeals(game, slug) {
@@ -317,22 +442,21 @@ function renderDeals(game, slug) {
   });
 }
 async function showGameSidebar(gameInfo) {
-  console.log(gameInfo);
   const sidebar = document.querySelector(".game-sidebar");
   sidebar.innerHTML = "";
 
-  // Fetch IGDB summary (short description)
-  const igdbSummary = await fetchIGDBSummary(gameInfo.title);
-  const descriptionText = igdbSummary
-    ? igdbSummary
-    : "Description unavailable";
+  // Fetch game description with fallback
+  const descriptionResult = await fetchGameDescription(gameInfo.slug);
+  const descriptionText = descriptionResult.text;
+  const source = descriptionResult.source;
 
-  /* OLD Steam implementation
-  const steamDescription = await fetchSteamDescription(gameInfo.appid);
-  const descriptionText = steamDescription
-    ? steamDescription
-    : "Description unavailable";
-  */
+  // Determine attribution link
+  let attributionHTML = 'summary unavailable';
+  if (source === 'IGDB') {
+    attributionHTML = 'summary by <a target="_blank" href="https://www.igdb.com/">IGDB</a>';
+  } else if (source === 'RAWG') {
+    attributionHTML = 'summary by <a target="_blank" href="https://rawg.io/">RAWG</a>';
+  }
 
   sidebar.innerHTML = `
     <div class="game-sidebar_banner">
@@ -345,7 +469,7 @@ async function showGameSidebar(gameInfo) {
       <div class="game-sidebar_description">
         ${descriptionText}
       </div>
-      <span class="game-sidebar_metacritic">summary by <a target="_blank" href="https://www.igdb.com/">IGDB</a></span>
+      <span class="game-sidebar_metacritic">${attributionHTML}</span>
     </div>
 `;
 
@@ -385,28 +509,43 @@ function setCachedData(key, data) {
 
 
 
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
   clearDayOldStorage();
-  //loading deals info based on url parameter
-  const queryString = window.location.search;
-  const urlParams = new URLSearchParams(queryString);
-  const appID = urlParams.get('appid');
-  const slug = urlParams.get('slug');
+  
+  // Check if redirected from 404.html (GitHub Pages)
+  let pathToUse = window.location.pathname;
+  const redirectPath = sessionStorage.getItem('redirectPath');
+  if (redirectPath) {
+    pathToUse = redirectPath;
+    sessionStorage.removeItem('redirectPath');
+    history.replaceState(null, '', redirectPath);
+  }
+  
+  const pathParts = pathToUse.split('/');
+  const slug = pathParts[pathParts.length - 1];
 
+  if (slug && slug !== 'game' && slug !== 'game.html') {
+    const appID = await resolveSlugToId(slug);
+    
+    if (!appID) {
+      console.error('Could not resolve game slug to ID');
+      return;
+    }
 
-  // If there's a appID in the URL, fetch and display that game
-  if (appID) {
     const cacheKey = `deals_${appID}`;
     const cachedDeals = getCachedData(cacheKey);
+    
     fetch(`${PROXY_BASE}?endpoint=/games/info/v2&id=${appID}`)
       .then(response => response.json())
       .then(gameInfo => {
         showGameSidebar(gameInfo);
+        if (cachedDeals) {
+          renderDeals(cachedDeals, gameInfo.title);
+        }
       })
       .catch(error => console.error("Error fetching game info:", error));
-    if (cachedDeals) {
-      renderDeals(cachedDeals, slug);
-    } else {
+    
+    if (!cachedDeals) {
       fetch(`${PROXY_BASE}?endpoint=/games/prices/v3`, {
         method: 'POST',
         headers: {
