@@ -272,45 +272,7 @@ async function fetchSteamDescription(appid) {
 }
 */
 
-// Helper function to try an IGDB query
-async function tryIGDBQuery(queryCondition) {
-  try {
-    const response = await fetch(`${PROXY_BASE}?api=igdb&endpoint=games`, {
-      method: 'POST',
-      body: `fields name,storyline,summary; ${queryCondition}; limit 1;`
-    });
-    if (!response.ok) return null;
-    return await response.json();
-  } catch (error) {
-    console.error("Error in IGDB query:", error);
-    return null;
-  }
-}
-
-// IGDB API implementation with fallback strategies
-async function fetchIGDBSummary(gameInfo) {
-  if (!gameInfo) return null;
-  
-  // Try slug first
-  let data = await tryIGDBQuery(`where slug = "${gameInfo.slug}"`);
-  
-  // If slug fails, try title search
-  if (!data || data.length === 0) {
-    data = await tryIGDBQuery(`search "${gameInfo.title}"`);
-  }
-
-  if (data && data.length > 0) {
-    if (data[0].summary) {
-      return { text: data[0].summary, source: 'IGDB' };
-    }
-    if (data[0].storyline) {
-      return { text: data[0].storyline, source: 'IGDB' };
-    }
-  }
-  return null;
-}
-
-// RAWG API implementation for fetching game description
+// RAWG API implementation for fetching game summary (optimized for speed)
 async function fetchRAWGDescription(gameName) {
   if (!gameName) return null;
 
@@ -321,7 +283,7 @@ async function fetchRAWGDescription(gameName) {
       return null;
     }
 
-    // Search for the game
+    // Search for the game and get details in a single request using the slug
     const searchResponse = await fetch(
       `https://api.rawg.io/api/games?key=${apiKey}&search=${encodeURIComponent(gameName)}&page_size=1`
     );
@@ -332,14 +294,19 @@ async function fetchRAWGDescription(gameName) {
     }
 
     const searchData = await searchResponse.json();
-    console.log("RAWG search data:", searchData);
 
     if (searchData.results && searchData.results.length > 0) {
-      const gameId = searchData.results[0].id;
-
-      // Get detailed game info
+      const game = searchData.results[0];
+      
+      // Use description_raw from search results if available (faster)
+      if (game.description_raw) {
+        return { text: game.description_raw.trim(), source: 'RAWG' };
+      }
+      
+      // Fallback: fetch full details only if description_raw not in search results
+      const gameSlug = game.slug;
       const detailResponse = await fetch(
-        `https://api.rawg.io/api/games/${gameId}?key=${apiKey}`
+        `https://api.rawg.io/api/games/${gameSlug}?key=${apiKey}`
       );
 
       if (!detailResponse.ok) {
@@ -348,8 +315,11 @@ async function fetchRAWGDescription(gameName) {
       }
 
       const details = await detailResponse.json();
-      console.log("RAWG details:", details);
 
+      if (details.description_raw) {
+        return { text: details.description_raw.trim(), source: 'RAWG' };
+      }
+      
       if (details.description) {
         // Remove HTML tags from description
         const tempDiv = document.createElement('div');
@@ -362,26 +332,6 @@ async function fetchRAWGDescription(gameName) {
     console.error("Error fetching RAWG description:", error);
   }
   return null;
-}
-
-// Validate if description is good quality (not promotional text)
-function isValidDescription(text) {
-  if (!text || text.length < 80) return false;
-
-  // Check for promotional keywords that indicate marketing text
-  const promoKeywords = [
-    'now available',
-    'buy now',
-    'purchase',
-    'bundle',
-    'features include',
-    'available as a bundle'
-  ];
-
-  const lowerText = text.toLowerCase();
-  const hasPromoKeywords = promoKeywords.some(keyword => lowerText.includes(keyword));
-
-  return !hasPromoKeywords;
 }
 
 // Resolve game slug to ID using cache or search API
@@ -409,22 +359,13 @@ async function resolveSlugToId(slug) {
   return null;
 }
 
-// Main function to fetch game description with fallback
+// Main function to fetch game description using RAWG only
 async function fetchGameDescription(gameInfo) {
   if (!gameInfo) return { text: 'Description unavailable', source: null };
 
-  // Try IGDB first
-  let result = await fetchIGDBSummary(gameInfo);
-
-  // If IGDB returns short or promotional text, try RAWG
-  if (!result || !isValidDescription(result.text)) {
-    console.log('IGDB description inadequate, trying RAWG...');
-    const rawgResult = await fetchRAWGDescription(gameInfo.title);
-    if (rawgResult && isValidDescription(rawgResult.text)) {
-      result = rawgResult;
-    }
-  }
-
+  // Use RAWG API for description
+  const result = await fetchRAWGDescription(gameInfo.title);
+  
   return result || { text: 'Description unavailable', source: null };
 }
 
@@ -451,18 +392,15 @@ async function showGameSidebar(gameInfo) {
   const sidebar = document.querySelector(".game-sidebar");
   sidebar.innerHTML = "";
 
-  // Fetch game description with fallback
+  // Fetch game description from RAWG
   const descriptionResult = await fetchGameDescription(gameInfo);
   const descriptionText = descriptionResult.text;
   const source = descriptionResult.source;
 
   // Determine attribution link
-  let attributionHTML = 'summary unavailable';
-  if (source === 'IGDB') {
-    attributionHTML = 'summary by <a target="_blank" href="https://www.igdb.com/">IGDB</a>';
-  } else if (source === 'RAWG') {
-    attributionHTML = 'summary by <a target="_blank" href="https://rawg.io/">RAWG</a>';
-  }
+  const attributionHTML = source === 'RAWG' 
+    ? 'summary by <a target="_blank" href="https://rawg.io/">RAWG</a>'
+    : 'summary unavailable';
 
   sidebar.innerHTML = `
     <div class="game-sidebar_banner">
@@ -478,7 +416,6 @@ async function showGameSidebar(gameInfo) {
       <span class="game-sidebar_metacritic">${attributionHTML}</span>
     </div>
 `;
-
 }
 const FULL_CACHE_DURATION = 1000 * 60 * 60 * 24; // 24 hours
 const CACHE_DURATION = 1000 * 60 * 5; // 5 minutes
@@ -541,32 +478,41 @@ document.addEventListener("DOMContentLoaded", async () => {
     const cacheKey = `deals_${appID}`;
     const cachedDeals = getCachedData(cacheKey);
     
-    fetch(`${PROXY_BASE}?endpoint=/games/info/v2&id=${appID}`)
-      .then(response => response.json())
-      .then(gameInfo => {
-        showGameSidebar(gameInfo);
-        if (cachedDeals) {
-          renderDeals(cachedDeals, gameInfo.title);
-        }
-      })
-      .catch(error => console.error("Error fetching game info:", error));
-    
-    if (!cachedDeals) {
-      fetch(`${PROXY_BASE}?endpoint=/games/prices/v3`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify([appID])
-      })
-        .then((response) => response.json())
-        .then((pricesArray) => {
-          // API returns array with one object: [{ id, historyLow, deals }]
-          const gamePrices = pricesArray[0];
-          renderDeals(gamePrices, slug);
-          setCachedData(cacheKey, gamePrices);
-        })
-        .catch((error) => console.error("Error fetching game info:", error));
+    // Parallelize ITAD Info, ITAD Prices, and Description fetching
+    try {
+      // First, fetch game info to get slug and title
+      const gameInfoPromise = fetch(`${PROXY_BASE}?endpoint=/games/info/v2&id=${appID}`)
+        .then(response => response.json());
+      
+      // Start all parallel requests
+      const [gameInfo, gamePrices, descriptionResult] = await Promise.all([
+        gameInfoPromise,
+        
+        // Fetch ITAD Prices (or use cached)
+        cachedDeals 
+          ? Promise.resolve(cachedDeals)
+          : fetch(`${PROXY_BASE}?endpoint=/games/prices/v3`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify([appID])
+            })
+            .then(response => response.json())
+            .then(pricesArray => {
+              const prices = pricesArray[0];
+              setCachedData(cacheKey, prices);
+              return prices;
+            }),
+        
+        // Fetch Description using gameInfo once it resolves
+        gameInfoPromise.then(info => fetchGameDescription(info.slug, info.title))
+      ]);
+
+      // All parallel requests complete - now render
+      showGameSidebar(gameInfo, descriptionResult);
+      renderDeals(gamePrices, gameInfo.title);
+      
+    } catch (error) {
+      console.error("Error fetching game data:", error);
     }
   }
   //searching
