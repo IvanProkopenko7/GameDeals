@@ -280,10 +280,10 @@ function stripHTML(html) {
   return temp.textContent || temp.innerText || '';
 }
 
-// RAWG API implementation for fetching game summary (requires 2 requests)
-async function fetchRAWGDescription(gameName) {
+// RAWG API implementation for fetching game summary (optimized to use slug first)
+async function fetchRAWGDescription(gameName, gameSlug) {
   if (!gameName) return null;
-
+  
   try {
     const apiKey = config.rawgApiKey;
     if (!apiKey) {
@@ -291,7 +291,33 @@ async function fetchRAWGDescription(gameName) {
       return null;
     }
 
-    // Step 1: Search for the game to get its slug
+    let slugToUse = gameSlug;
+
+    // Step 1: Try direct fetch with slug if available
+    if (gameSlug) {
+      try {
+        const detailResponse = await fetch(
+          `https://api.rawg.io/api/games/${gameSlug}?key=${apiKey}`
+        );
+
+        if (detailResponse.ok) {
+          const details = await detailResponse.json();
+          const description = details.description_raw || details.description;
+          
+          if (description) {
+            const cleanText = stripHTML(description).trim();
+            
+            if (cleanText) {
+              return { text: cleanText, source: 'RAWG' };
+            }
+          }
+        }
+      } catch (error) {
+        console.warn('Direct slug fetch failed, falling back to search:', error.message);
+      }
+    }
+
+    // Step 2: Fallback to search if direct fetch failed or slug not provided
     const searchResponse = await fetch(
       `https://api.rawg.io/api/games?key=${apiKey}&search=${encodeURIComponent(gameName)}&search_exact=true&page_size=1`
     );
@@ -304,11 +330,11 @@ async function fetchRAWGDescription(gameName) {
     const searchData = await searchResponse.json();
 
     if (searchData.results && searchData.results.length > 0) {
-      const gameSlug = searchData.results[0].slug;
+      slugToUse = searchData.results[0].slug;
       
-      // Step 2: Fetch full game details by slug (only way to get description)
+      // Fetch full game details by slug
       const detailResponse = await fetch(
-        `https://api.rawg.io/api/games/${gameSlug}?key=${apiKey}`
+        `https://api.rawg.io/api/games/${slugToUse}?key=${apiKey}`
       );
 
       if (!detailResponse.ok) {
@@ -317,8 +343,6 @@ async function fetchRAWGDescription(gameName) {
       }
 
       const details = await detailResponse.json();
-
-      // Try different description fields (ordered by quality)
       const description = details.description_raw || details.description;
       
       if (description) {
@@ -368,8 +392,8 @@ async function fetchGameDescription(gameInfo) {
   const cached = getCachedData(cacheKey, CACHE_DURATIONS.description);
   if (cached) return cached;
 
-  // Fetch from RAWG API
-  const result = await fetchRAWGDescription(gameInfo.title);
+  // Fetch from RAWG API (pass both title and slug for optimization)
+  const result = await fetchRAWGDescription(gameInfo.title, gameInfo.slug);
   
   // Cache the result (even if null/empty to avoid repeated failed requests)
   const finalResult = result || { text: 'Description unavailable', source: null };
