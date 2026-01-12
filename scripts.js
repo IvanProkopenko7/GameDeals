@@ -272,7 +272,15 @@ async function fetchSteamDescription(appid) {
 }
 */
 
-// RAWG API implementation for fetching game summary (optimized for speed)
+// Helper function to strip HTML tags
+function stripHTML(html) {
+  if (!html || !html.includes('<')) return html;
+  const temp = document.createElement('div');
+  temp.innerHTML = html;
+  return temp.textContent || temp.innerText || '';
+}
+
+// RAWG API implementation for fetching game summary (requires 2 requests)
 async function fetchRAWGDescription(gameName) {
   if (!gameName) return null;
 
@@ -283,9 +291,9 @@ async function fetchRAWGDescription(gameName) {
       return null;
     }
 
-    // Search for the game and get details in a single request using the slug
+    // Step 1: Search for the game to get its slug
     const searchResponse = await fetch(
-      `https://api.rawg.io/api/games?key=${apiKey}&search=${encodeURIComponent(gameName)}&page_size=1`
+      `https://api.rawg.io/api/games?key=${apiKey}&search=${encodeURIComponent(gameName)}&search_exact=true&page_size=1`
     );
 
     if (!searchResponse.ok) {
@@ -296,15 +304,9 @@ async function fetchRAWGDescription(gameName) {
     const searchData = await searchResponse.json();
 
     if (searchData.results && searchData.results.length > 0) {
-      const game = searchData.results[0];
+      const gameSlug = searchData.results[0].slug;
       
-      // Use description_raw from search results if available (faster)
-      if (game.description_raw) {
-        return { text: game.description_raw.trim(), source: 'RAWG' };
-      }
-      
-      // Fallback: fetch full details only if description_raw not in search results
-      const gameSlug = game.slug;
+      // Step 2: Fetch full game details by slug (only way to get description)
       const detailResponse = await fetch(
         `https://api.rawg.io/api/games/${gameSlug}?key=${apiKey}`
       );
@@ -316,16 +318,14 @@ async function fetchRAWGDescription(gameName) {
 
       const details = await detailResponse.json();
 
-      if (details.description_raw) {
-        return { text: details.description_raw.trim(), source: 'RAWG' };
-      }
+      // Try different description fields (ordered by quality)
+      const description = details.description_raw || details.description;
       
-      if (details.description) {
-        // Remove HTML tags from description
-        const tempDiv = document.createElement('div');
-        tempDiv.innerHTML = details.description;
-        const plainText = tempDiv.textContent || tempDiv.innerText || '';
-        return { text: plainText.trim(), source: 'RAWG' };
+      if (description) {
+        const cleanText = stripHTML(description).trim();
+        if (cleanText) {
+          return { text: cleanText, source: 'RAWG' };
+        }
       }
     }
   } catch (error) {
@@ -359,14 +359,23 @@ async function resolveSlugToId(slug) {
   return null;
 }
 
-// Main function to fetch game description using RAWG only
+// Main function to fetch game description using RAWG only (with aggressive caching)
 async function fetchGameDescription(gameInfo) {
   if (!gameInfo) return { text: 'Description unavailable', source: null };
 
-  // Use RAWG API for description
+  // Check cache first (30-day cache since descriptions never change)
+  const cacheKey = `desc_${gameInfo.slug || gameInfo.title}`;
+  const cached = getCachedData(cacheKey, CACHE_DURATIONS.description);
+  if (cached) return cached;
+
+  // Fetch from RAWG API
   const result = await fetchRAWGDescription(gameInfo.title);
   
-  return result || { text: 'Description unavailable', source: null };
+  // Cache the result (even if null/empty to avoid repeated failed requests)
+  const finalResult = result || { text: 'Description unavailable', source: null };
+  setCachedData(cacheKey, finalResult, CACHE_DURATIONS.description);
+  
+  return finalResult;
 }
 
 function renderDeals(game, slug) {
@@ -418,16 +427,33 @@ async function showGameSidebar(gameInfo) {
 `;
 }
 const FULL_CACHE_DURATION = 1000 * 60 * 60 * 24; // 24 hours
-const CACHE_DURATION = 1000 * 60 * 5; // 5 minutes
-function getCachedData(key) {
+const CACHE_DURATION = 1000 * 60 * 5; // 5 minutes (default)
+
+// Granular cache durations for different data types
+const CACHE_DURATIONS = {
+  gameInfo: 1000 * 60 * 60 * 24 * 7,  // 7 days - game info rarely changes
+  prices: 1000 * 60 * 60,              // 1 hour - prices change frequently
+  slugToId: 1000 * 60 * 60 * 24 * 30, // 30 days - slug-to-ID mapping is permanent
+  search: 1000 * 60 * 5,               // 5 minutes - search results are dynamic
+  description: 1000 * 60 * 60 * 24 * 30 // 30 days - descriptions never change
+};
+
+function getCachedData(key, customDuration) {
   const cachedItem = localStorage.getItem(key);
   if (!cachedItem) return null;
-
-  if (cachedItem.timestamp + CACHE_DURATION < Date.now()) {
+  
+  try {
+    const parsed = JSON.parse(cachedItem);
+    const duration = customDuration || parsed.duration || CACHE_DURATION;
+    if (parsed.timestamp + duration < Date.now()) {
+      localStorage.removeItem(key);
+      return null;
+    }
+    return parsed.data;
+  } catch (e) {
     localStorage.removeItem(key);
     return null;
   }
-  return JSON.parse(cachedItem).data;
 }
 function clearDayOldStorage() {
   Object.keys(localStorage).forEach(key => {
@@ -442,10 +468,11 @@ function clearDayOldStorage() {
   });
 }
 
-function setCachedData(key, data) {
+function setCachedData(key, data, customDuration) {
   const cacheObject = {
     data: data,
-    timestamp: Date.now()
+    timestamp: Date.now(),
+    duration: customDuration || CACHE_DURATION
   };
   localStorage.setItem(key, JSON.stringify(cacheObject));
 }
@@ -504,9 +531,9 @@ document.addEventListener("DOMContentLoaded", async () => {
             }),
         
         // Fetch Description using gameInfo once it resolves
-        gameInfoPromise.then(info => fetchGameDescription(info.slug, info.title))
+        gameInfoPromise.then(info => fetchGameDescription(info))
       ]);
-
+      console.log("Fetched game data:", { gameInfo, gamePrices, descriptionResult });
       // All parallel requests complete - now render
       showGameSidebar(gameInfo, descriptionResult);
       renderDeals(gamePrices, gameInfo.title);

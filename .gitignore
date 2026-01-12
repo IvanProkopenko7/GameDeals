@@ -1,6 +1,7 @@
 # dependencies
 node_modules/
-.vscode/
+
 
 # local dev config
+/.vscode/
 vite.config.js
