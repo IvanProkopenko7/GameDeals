@@ -526,20 +526,41 @@ document.addEventListener("DOMContentLoaded", async () => {
       return;
     }
 
-    const cacheKey = `deals_${appID}`;
-    const cachedDeals = getCachedData(cacheKey);
+    const dealsCacheKey = `deals_${appID}`;
+    const infoCacheKey = `info_${appID}`;
+    const descCacheKey = `desc_${slug}`;
     
-    // Parallelize ITAD Info, ITAD Prices, and Description fetching
-    try {
-      // First, fetch game info to get slug and title
-      const gameInfoPromise = fetch(`${PROXY_BASE}?endpoint=/games/info/v2&id=${appID}`)
-        .then(response => response.json());
+    // ⚡ INSTANT RENDER: Check if we have cached data
+    const cachedInfo = getCachedData(infoCacheKey, CACHE_DURATIONS.gameInfo);
+    const cachedDeals = getCachedData(dealsCacheKey, CACHE_DURATIONS.prices);
+    const cachedDesc = getCachedData(descCacheKey, CACHE_DURATIONS.description);
+    
+    // If ALL data is cached, render INSTANTLY
+    if (cachedInfo && cachedDeals && cachedDesc) {
+      console.log('⚡ Instant render from cache');
+      showGameSidebar(cachedInfo, cachedDesc);
+      renderDeals(cachedDeals, cachedInfo.title);
       
-      // Start all parallel requests
+      // Optionally fetch fresh data in background (only if cache is older than 1 hour)
+      const cacheAge = Date.now() - JSON.parse(localStorage.getItem(infoCacheKey))?.timestamp;
+      if (cacheAge > 1000 * 60 * 60) { // 1 hour
+        console.log('🔄 Refreshing data in background');
+        refreshGameDataInBackground(appID, slug);
+      }
+      // Don't return - let search bar initialization run below
+    } else {
+    // Otherwise, fetch data normally
+    try {
+      const gameInfoPromise = fetch(`${PROXY_BASE}?endpoint=/games/info/v2&id=${appID}`)
+        .then(response => response.json())
+        .then(info => {
+          setCachedData(infoCacheKey, info, CACHE_DURATIONS.gameInfo);
+          return info;
+        });
+      
       const [gameInfo, gamePrices, descriptionResult] = await Promise.all([
         gameInfoPromise,
         
-        // Fetch ITAD Prices (or use cached)
         cachedDeals 
           ? Promise.resolve(cachedDeals)
           : fetch(`${PROXY_BASE}?endpoint=/games/prices/v3`, {
@@ -550,22 +571,23 @@ document.addEventListener("DOMContentLoaded", async () => {
             .then(response => response.json())
             .then(pricesArray => {
               const prices = pricesArray[0];
-              setCachedData(cacheKey, prices);
+              setCachedData(dealsCacheKey, prices, CACHE_DURATIONS.prices);
               return prices;
             }),
         
-        // Fetch Description using gameInfo once it resolves
         gameInfoPromise.then(info => fetchGameDescription(info))
       ]);
+      
       console.log("Fetched game data:", { gameInfo, gamePrices, descriptionResult });
-      // All parallel requests complete - now render
       showGameSidebar(gameInfo, descriptionResult);
       renderDeals(gamePrices, gameInfo.title);
       
     } catch (error) {
       console.error("Error fetching game data:", error);
     }
+    } // End else block for cached data check
   }
+  
   //searching
   const searchBar = document.getElementById("searchBar");
   if (searchBar) {
@@ -591,6 +613,46 @@ document.addEventListener("DOMContentLoaded", async () => {
 
 });
 
+// Background refresh function (non-blocking)
+async function refreshGameDataInBackground(appID, slug) {
+  try {
+    const dealsCacheKey = `deals_${appID}`;
+    const infoCacheKey = `info_${appID}`;
+    
+    const gameInfoPromise = fetch(`${PROXY_BASE}?endpoint=/games/info/v2&id=${appID}`)
+      .then(response => response.json())
+      .then(info => {
+        setCachedData(infoCacheKey, info, CACHE_DURATIONS.gameInfo);
+        return info;
+      });
+    
+    const [gameInfo, gamePrices, descriptionResult] = await Promise.all([
+      gameInfoPromise,
+      
+      fetch(`${PROXY_BASE}?endpoint=/games/prices/v3`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify([appID])
+      })
+      .then(response => response.json())
+      .then(pricesArray => {
+        const prices = pricesArray[0];
+        setCachedData(dealsCacheKey, prices, CACHE_DURATIONS.prices);
+        return prices;
+      }),
+      
+      gameInfoPromise.then(info => fetchGameDescription(info))
+    ]);
+    
+    // Update UI with fresh data
+    showGameSidebar(gameInfo, descriptionResult);
+    renderDeals(gamePrices, gameInfo.title);
+    console.log('✅ Background refresh complete');
+    
+  } catch (error) {
+    console.error("Error refreshing data:", error);
+  }
+}
 
 /*
  1. pass all filter data to url
